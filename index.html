@@ -1,0 +1,72 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>QR読み取り</title>
+  <!-- QR読み取りライブラリ（バージョンを固定して読み込む） -->
+  <script src="https://unpkg.com/html5-qrcode@2.3.8/html5-qrcode.min.js"></script>
+  <style>
+    body { font-family: sans-serif; margin: 16px; }
+    #reader { width: 100%; max-width: 480px; margin: 0 auto; }
+    #result { margin-top: 16px; padding: 16px; font-size: 20px; text-align: center; border-radius: 8px; background: #eee; }
+    #result.ok { background: #d4f7d4; }
+    #result.ng { background: #fbd5d5; }
+  </style>
+</head>
+<body>
+  <div id="reader"></div>
+  <div id="result">準備中…</div>
+
+  <script>
+    // GASの受付画面から渡された「送り先」（GAS画面のドメイン）
+    const gasOrigin = new URLSearchParams(location.search).get('origin') || '';
+    const resultEl = document.getElementById('result');
+    let busy = false; // 送信中は次のQRを読まない
+
+    // GASの受付画面から開かれたときだけ動かす
+    const isValidOrigin = /^https:\/\/[a-z0-9-]+\.googleusercontent\.com$/.test(gasOrigin);
+    if (!window.opener) {
+      showResult(false, '受付画面の「スキャン開始」から開いてください（opener なし）');
+    } else if (!isValidOrigin) {
+      showResult(false, '受付画面の「スキャン開始」から開いてください（origin 不正）');
+    } else {
+      startScanner();
+    }
+
+    function startScanner() {
+      const scanner = new Html5Qrcode('reader');
+      scanner
+        .start({ facingMode: 'environment' }, { fps: 10, qrbox: 250 }, onScanSuccess)
+        .then(() => showResult(null, 'QRコードをかざしてください'))
+        .catch((err) => showResult(false, 'カメラを起動できません：' + err));
+    }
+
+    // QRを読み取ったとき
+    function onScanSuccess(text) {
+      if (busy) return;
+      busy = true;
+      showResult(null, '送信中…');
+      // GASの受付画面に値を送る（送り先を gasOrigin に限定）
+      window.opener.postMessage({ type: 'qr', qr: text }, gasOrigin);
+      // 10秒たっても返事がなければ、もう一度読めるようにする
+      setTimeout(() => {
+        if (busy) { busy = false; showResult(false, '応答がありません。もう一度読み取ってください'); }
+      }, 10000);
+    }
+
+    // GASの受付画面から結果が返ってきたとき
+    window.addEventListener('message', (e) => {
+      if (e.origin !== gasOrigin) return;            // 送信元を確認
+      if (!e.data || e.data.type !== 'result') return;
+      showResult(e.data.ok, e.data.message);
+      setTimeout(() => { busy = false; }, 2000);     // 2秒後に次のQRを読めるようにする
+    });
+
+    function showResult(ok, message) {
+      resultEl.textContent = message;
+      resultEl.className = ok === true ? 'ok' : ok === false ? 'ng' : '';
+    }
+  </script>
+</body>
+</html>
